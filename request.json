@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "id": "135f2741-e393-424b-ab43-2e6274babb28",
+  "repository": "rhkim00/vlmrh-tig-20261021-1405-135f27",
+  "sourceCommit": "51512dfd96b0d813134856af542ea00661d307d7",
+  "request": {
+    "title": "Switch the policy backbone from Qwen2.5-VL to Qwen3-8B",
+    "requestCategory": "feature",
+    "scope": "Replace the policy backbone (config key models.policy, used by GRPO training in train.py and by evaluation in evaluate.py and judge_check.py) with Qwen3-8B.\n\nCurrent state, as found in the project (vlmrh/ folder):\n- models.py load_model() hardcodes transformers' Qwen2_5_VLForConditionalGeneration for every model. It is shared by the policy and the judge (judge.py _load calls load_model(cfg, \"judge\", ...)).\n- models.py load_processor() uses AutoProcessor with models.image_min_pixels / image_max_pixels, and forces tokenizer padding_side.\n- train.py builds the LoRA from cfg[\"lora\"][\"target_modules_regex\"] and raises AssertionError if any trainable parameter name contains \"visual\" or is not a lora_ parameter.\n- The model ids, revisions, dtype, attn_implementation and pixel limits live in configs/default.yaml. PROJECT_ROOT is /home/work/Storage_rhk, so the file is /home/work/Storage_rhk/configs/default.yaml, outside the vlmrh/ folder. Its current values were NOT read, so they are unknown.\n- POLICY_PROMPTS[\"policy_v1\"] in models.py was tuned on Qwen2.5-VL output style (it was chosen for answer-tag compliance).\n\nExpected end state:\n1. configs/default.yaml: models.policy.id is the requester's Qwen3-8B Hugging Face repo id, and models.policy.revision is a full commit SHA copied from that repo's Hub page (not \"main\"). Keep the other models.* keys. If the class choice in step 2 needs a config key, add it under models.policy only.\n2. models.py load_model(): the policy is loaded with the transformers class that matches the Qwen3-8B checkpoint, while the judge still loads with Qwen2_5_VLForConditionalGeneration. Make the class selectable per model (for example an explicit key under models.policy, since config.apply_overrides refuses unknown keys, the key must exist in the YAML). Use the class named in the new checkpoint's config.json/model card.\n3. configs/default.yaml lora.target_modules_regex must still match the language attention projections of the new model and must not match its vision tower (if the model has one). Adjust only if the module names differ.\n4. Callers (train.py, evaluate.py, judge_check.py, rewards.py) keep using load_model / load_processor with the same signatures. No other code changes.\n\nAssumptions (the requester should confirm):\n- Assumption: \"backbone\" means the policy only. The judge stays on its current Qwen2.5-VL model.\n- Assumption: \"Qwen3-8B\" is the exact repo the requester names; the worker must use the id the requester provides and must not pick a different variant.\n- Open question: every sample is sent with an image (policy_messages + with_image, qwen_vl_utils in env_check.py). A text-only Qwen3-8B cannot read the chart image. If the requester meant a vision-language Qwen3 variant, use that id. If they meant text-only, stop and report, because the image pipeline would then need to change, which this request does not cover.\n- Assumption: do not retune POLICY_PROMPTS in this change; compliance with the answer tags may differ and should be reported, not fixed here.",
+    "acceptanceChecks": [
+      "models.py: grep shows the policy load path uses the class matching Qwen3-8B, and the judge load path still uses Qwen2_5_VLForConditionalGeneration.",
+      "configs/default.yaml: models.policy.id is the requester's Qwen3-8B repo id, and models.policy.revision is a 40-character hex commit SHA (not \"main\").",
+      "Running `python -m vlmrh env` from /home/work/Storage_rhk writes outputs/env.json with hub.policy.id set to the new repo, no remote_error for policy, and pinned_revision equal to the new SHA.",
+      "Running `python -m vlmrh smoke-infer --n 1` finishes without a traceback: the policy produces text for one problem and the judge loads and scores it.",
+      "Running `python -m vlmrh train --set train.run_tag=<new tag>` reaches the printed lora_n_modules / n_trainable_params summary with no AssertionError, meaning no trainable parameter contains 'visual'. Stop the run after that summary is printed.",
+      "Only models.py and configs/default.yaml differ from the snapshot taken before editing (plus any new run output under outputs/)."
+    ],
+    "aiRequirement": {
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "source": "declared"
+    },
+    "rewardTig": "0",
+    "rewardMultiplier": "1",
+    "executionDeadlineAt": "2026-10-22T14:05:20.525Z",
+    "originalRequest": "backbone model을 qwen3-8B로 수정해볼래?",
+    "context": "Project folder: vlmrh. Git: branch master at 51512df; 0 changed and 30 new file(s) not yet committed. Tracked files: none.",
+    "completedWork": "Recent commits: \"Initialize project for Tokenisgold\".",
+    "constraints": [
+      "Judge model id, revision, judge prompt and judge cache behaviour stay unchanged (the judge cache key includes the judge model id, so existing cache entries stay valid).",
+      "Dataset id and revision, reward functions, GRPO hyperparameters, LoRA rank/alpha/dropout, and the CLI commands and flags stay unchanged.",
+      "POLICY_PROMPTS (including policy_v1) is not edited.",
+      "Existing outputs (outputs/runs, env.json, manifest, caches) are not deleted or overwritten; train.py refuses to overwrite a finished run, so use a new train.run_tag for trial runs.",
+      "No new Python packages are added or version-pinned without asking; the installed transformers must support the chosen policy class.",
+      "Do not commit. All project files are currently untracked (git status shows ??), so git diff cannot show changes; snapshot models.py and configs/default.yaml before editing.",
+      "Do not hardcode secrets, tokens or HF credentials in the code or YAML."
+    ],
+    "setupSteps": [
+      "No install command, lockfile, requirements file or README was found in the project, so confirm the environment with the requester before installing anything.",
+      "Python packages the code imports: torch, transformers (must include the Qwen3 policy class chosen), trl, peft, datasets, accelerate, huggingface_hub, PyYAML, Pillow, qwen_vl_utils. The project pins none of them; confirm versions before installing.",
+      "A CUDA GPU is required. env_check.py notes a measured peak of about 26 GB at evaluation.",
+      "Network access to the Hugging Face Hub is needed to fetch the model and check the revision. The HF cache location comes from project.hf_home in configs/default.yaml (setup_hf_env in config.py).",
+      "Obtain from the requester: the exact Qwen3-8B repo id (text-only or vision-language variant) and its commit SHA. Do not guess either.",
+      "Run commands from /home/work/Storage_rhk, the parent of the vlmrh package, so that `python -m vlmrh` resolves the package and the default config path configs/default.yaml.",
+      "Run `python -m vlmrh data` first if outputs/manifest.jsonl is missing (data.py load_manifest), because smoke-infer and train read it."
+    ],
+    "testSteps": [
+      "cd /home/work/Storage_rhk && python -m vlmrh env  (check outputs/env.json hub.policy entry as in acceptance checks)",
+      "cd /home/work/Storage_rhk && python -m vlmrh smoke-infer --n 1  (policy answer for one problem, judge scores it)",
+      "cd /home/work/Storage_rhk && python -m vlmrh train --set train.run_tag=qwen3check  (watch for the printed lora_n_modules / n_trainable_params JSON and no AssertionError; stop after it prints)",
+      "No automated test suite was found; review the diff of models.py and configs/default.yaml against the acceptance checks."
+    ]
+  },
+  "layout": "tree"
+}
